@@ -18,18 +18,27 @@ data LispVal = Atom String
              | String String
              | Bool Bool
 
-instance Show LispVal where
-  show (Atom name)       = "Atom: " ++ name
-  show (Number i)        = "Number: " ++ show i
-  show (String str)      = "String: " ++ str
-  show (Bool a)          = "Bool: " ++ show a
-  show (List xs)         = "List[ " ++ (unwords (map show xs)) ++ " ]"
-  show (DottedList xs x) = "DList[ " ++ (unwords (map show xs)) ++ " " ++ show x ++ " ]"
+showVal :: LispVal -> String
+showVal (String contents) = "\"" ++ contents ++ "\""
+showVal (Atom name) = name
+showVal (Number contents) = show contents
+showVal (Bool True) = "#t"
+showVal (Bool False) = "#f"
+showVal (List contents) = "(" ++ unwordsList contents ++ ")"
+showVal (DottedList head tail) = "(" ++ unwordsList head ++ " . " ++ showVal tail ++ ")"
 
-readExpr :: String -> String
+unwordsList :: [LispVal] -> String
+unwordsList = unwords . map showVal
+
+instance Show LispVal where
+  show = showVal
+
+
+
+readExpr :: String -> LispVal
 readExpr input = case parse parseExpr "lisp" input of
-                   Left err           -> "No match: " ++ show err
-                   Right val          -> "Found Value " ++ show val
+                   Left err  -> String $ "No match: " ++ show err
+                   Right val -> val
 
 parseReplacers = try . choice . map (\(p, r) -> p >> return (r p))
 
@@ -95,12 +104,71 @@ parseExpr = parseNumber
                    char ')'
                    return x
 
+numericBinop :: (Integer -> Integer -> Integer) -> [LispVal] -> LispVal
+numericBinop op params = Number $ foldl1 op $ map unpackNum params
+
+unpackNum :: LispVal -> Integer
+unpackNum (Number n) = n
+unpackNum _ = 0
+
+isSymbol :: [LispVal] -> LispVal
+isSymbol [(Atom _)] = Bool True
+isSymbol _ = Bool False
+
+isString :: [LispVal] -> LispVal
+isString [(String _)] = Bool True
+isString _ = Bool False
+
+isNumber :: [LispVal] -> LispVal
+isNumber [(Number _)] = Bool True
+isNumber _ = Bool False
+
+isBoolean :: [LispVal] -> LispVal
+isBoolean [(Bool _)] = Bool True
+isBoolean _ = Bool False
+
+isList :: [LispVal] -> LispVal
+isList [(List _)] = Bool True
+isList _ = Bool False
+
+isPair :: [LispVal] -> LispVal
+isPair [(DottedList _ _)] = Bool True
+isPair _ = Bool False
+
+stringToSymbol :: [LispVal] -> LispVal
+stringToSymbol [(String str)] = Atom str
+
+symbolToString :: [LispVal] -> LispVal
+symbolToString [(Atom a)] = String a
+
+primitives :: [(String, [LispVal] -> LispVal)]
+primitives = [("+", numericBinop (+)),
+              ("-", numericBinop (-)),
+              ("*", numericBinop (*)),
+              ("/", numericBinop div),
+              ("mod", numericBinop mod),
+              ("quotient", numericBinop quot),
+              ("remainder", numericBinop rem),
+              ("symbol?", isSymbol),
+              ("string?", isString),
+              ("number?", isNumber),
+              ("boolean?", isBoolean),
+              ("list?", isList),
+              ("pair?", isPair),
+              ("string->symbol", stringToSymbol),
+              ("symbol->string", symbolToString)]
+
+
+
+apply :: String -> [LispVal] -> LispVal
+apply func args = maybe (Bool False) ($ args) $ lookup func primitives
+
+eval :: LispVal -> LispVal
+eval val@(String _) = val
+eval val@(Number _) = val
+eval val@(Bool _) = val
+eval (List [Atom "quote", val]) = val
+eval (List (Atom func : args)) = apply func $ map eval args
+
 main :: IO ()
-main = do args <- getArgs
-          case args of
-            [x:xs] -> do let arg = args !! 0
-                         putStrLn arg
-                         putStrLn . readExpr $ arg
-            _      -> do putStrLn "Enter expression: "
-                         expression <- getLine
-                         putStrLn . readExpr $ expression
+main = getArgs >>= putStrLn . show . eval . readExpr . (!! 0)
